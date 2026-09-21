@@ -1,0 +1,53 @@
+# --- Compilación .NET ---
+bin/
+obj/
+publish/
+out/
+
+# --- Bases de datos locales (SQLite) ---
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# --- Configuración con variables y secretos: nunca al repositorio ---
+# Se versionan solo las plantillas *.example (copiar, quitar ".example" y rellenar).
+.env
+.env.*
+!.env.example
+appsettings.*.json
+!appsettings.*.example.json
+Properties/launchSettings.json
+!Properties/launchSettings.example.json
+secrets.json
+*.pfx
+
+# --- IDE y herramientas ---
+.vs/
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.user
+*.suo
+*.rsuser
+*.DotSettings.user
+
+# --- Pruebas y cobertura ---
+TestResults/
+coverage/
+*.trx
+*.coverage
+
+# --- Logs ---
+*.log
+logs/
+
+# --- Sistema operativo ---
+.DS_Store
+Thumbs.db
+
+# --- Asistentes de código (índices y ajustes locales) ---
+.codegraph/
+.claude/settings.local.json
+CLAUDE.local.md
