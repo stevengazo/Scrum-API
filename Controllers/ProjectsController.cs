@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Scrum.Api.Auth;
 using Scrum.Api.Models;
 using Scrum.Api.Services;
 
@@ -36,7 +37,7 @@ public class ProjectsController(IProjectService projects) : ControllerBase
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<ActionResult<ProjectDto>> Create(ProjectCreateInput input)
     {
-        var result = await projects.CreateAsync(input);
+        var result = await projects.CreateAsync(input, User.TenantId());
         return result.Error is { } e ? this.ToFailure(e) : CreatedAtAction(nameof(Get), new { id = result.Value!.Id }, result.Value);
     }
 

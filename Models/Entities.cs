@@ -8,6 +8,7 @@ public enum Priority { Low, Medium, High, Critical }
 public enum SprintStatus { Planned, Active, Completed }
 /// <summary>Página = documento (Lexical). Sheet = hoja de cálculo independiente (su Content es un SheetData JSON).</summary>
 public enum PageKind { Page, Sheet }
+public enum NotificationType { Comment, Assigned, SprintCompleted }
 
 public static class Roles
 {
@@ -31,8 +32,19 @@ public static class Policies
     public const string ManageUsers = nameof(ManageUsers);
 }
 
+/// <summary>Organización. Cada tenant tiene sus datos completamente aislados (ver el query filter global en
+/// ScrumDbContext). Slug = URL de invitación para sumar gente ("/register/&lt;slug&gt;").</summary>
+public class Tenant
+{
+    public int Id { get; set; }
+    public required string Name { get; set; }
+    public required string Slug { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
 public class AppUser : IdentityUser
 {
+    public int TenantId { get; set; }
     public string DisplayName { get; set; } = "";
     public string Color { get; set; } = "#64748b";
 }
@@ -40,6 +52,7 @@ public class AppUser : IdentityUser
 public class Project
 {
     public int Id { get; set; }
+    public int TenantId { get; set; }
     /// <summary>Prefijo de las claves de historia: AGL → AGL-12.</summary>
     public required string Key { get; set; }
     public required string Name { get; set; }
@@ -54,6 +67,7 @@ public class Project
 public class Sprint
 {
     public int Id { get; set; }
+    public int TenantId { get; set; }
     public int ProjectId { get; set; }
     public required string Name { get; set; }
     public string? Goal { get; set; }
@@ -67,6 +81,7 @@ public class Sprint
 public class Story
 {
     public int Id { get; set; }
+    public int TenantId { get; set; }
     public int ProjectId { get; set; }
     public int Number { get; set; }
     public required string Title { get; set; }
@@ -88,6 +103,7 @@ public class Story
 public class AcceptanceCriterion
 {
     public int Id { get; set; }
+    public int TenantId { get; set; }
     public int StoryId { get; set; }
     public required string Text { get; set; }
     public bool Done { get; set; }
@@ -98,6 +114,7 @@ public class AcceptanceCriterion
 public class Page
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+    public int TenantId { get; set; }
     public int? ProjectId { get; set; }
     public Guid? ParentId { get; set; }
     public PageKind Kind { get; set; } = PageKind.Page;
@@ -110,10 +127,38 @@ public class Page
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 
+/// <summary>Comentario de una historia. El hilo es plano (sin respuestas anidadas).</summary>
+public class Comment
+{
+    public int Id { get; set; }
+    public int TenantId { get; set; }
+    public int StoryId { get; set; }
+    public required string AuthorId { get; set; }
+    public required string Text { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? EditedAt { get; set; }
+}
+
+/// <summary>Aviso para un usuario (comentario, asignación, cierre de sprint). Se empuja por SignalR y se guarda
+/// para que llegue también a quien estaba desconectado.</summary>
+public class Notification
+{
+    public int Id { get; set; }
+    public int TenantId { get; set; }
+    public required string UserId { get; set; }
+    public NotificationType Type { get; set; }
+    public required string Text { get; set; }
+    /// <summary>Ruta relativa del front a la que lleva, ej. "/p/3/backlog".</summary>
+    public required string Link { get; set; }
+    public bool Read { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
 /// <summary>Nota personal de la lista "To-do" de un usuario, opcionalmente ligada a una historia.</summary>
 public class TodoItem
 {
     public int Id { get; set; }
+    public int TenantId { get; set; }
     public required string UserId { get; set; }
     public required string Text { get; set; }
     public bool Done { get; set; }

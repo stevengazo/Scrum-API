@@ -22,14 +22,14 @@ public partial class ProjectService(ScrumDbContext db) : IProjectService
     public async Task<Result<ProjectDto>> GetAsync(int id) =>
         await Dtos(db.Projects.Where(p => p.Id == id)).FirstOrDefaultAsync() is { } p ? p : Error.NotFound();
 
-    public async Task<Result<ProjectDto>> CreateAsync(ProjectCreateInput input)
+    public async Task<Result<ProjectDto>> CreateAsync(ProjectCreateInput input, int tenantId)
     {
         var key = (input.Key ?? "").Trim().ToUpperInvariant();
         if (!KeyPattern().IsMatch(key)) return Error.Invalid("La clave debe tener 2-8 caracteres (A-Z, 0-9) y empezar con letra.");
         if (string.IsNullOrWhiteSpace(input.Name)) return Error.Invalid("El nombre es obligatorio.");
         if (await db.Projects.AnyAsync(p => p.Key == key)) return Error.Conflict("Ya existe un proyecto con esa clave.");
 
-        var p = new Project { Key = key, Name = input.Name.Trim(), Description = input.Description, Color = input.Color ?? "#6366f1" };
+        var p = new Project { TenantId = tenantId, Key = key, Name = input.Name.Trim(), Description = input.Description, Color = input.Color ?? "#6366f1" };
         db.Projects.Add(p);
         await db.SaveChangesAsync();
         return await Dtos(db.Projects.Where(x => x.Id == p.Id)).FirstAsync();

@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Scrum.Api.Auth;
 using Scrum.Api.Models;
 using Scrum.Api.Services;
 
@@ -40,7 +41,7 @@ public class StoriesController(IStoryService stories) : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<StoryDto>> Create(int projectId, StoryInput input)
     {
-        var result = await stories.CreateAsync(projectId, input);
+        var result = await stories.CreateAsync(projectId, input, User.UserId());
         return result.Error is { } e ? this.ToFailure(e) : Created($"api/projects/{projectId}/stories/{result.Value!.Id}", result.Value);
     }
 
@@ -50,7 +51,7 @@ public class StoriesController(IStoryService stories) : ControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> Update(int projectId, int id, StoryInput input) => this.ToNoContent(await stories.UpdateAsync(projectId, id, input));
+    public async Task<IActionResult> Update(int projectId, int id, StoryInput input) => this.ToNoContent(await stories.UpdateAsync(projectId, id, input, User.UserId()));
 
     /// <summary>Mueve una historia a otro estado, sprint o posición.</summary>
     [HttpPost("{id:int}/move")]

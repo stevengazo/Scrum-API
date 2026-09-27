@@ -1,6 +1,8 @@
 # Scrum-API
 
-.NET 10 Web API (controladores) + EF Core con SQLite + Identity/JWT. Proyectos → Sprints → Historias, más páginas de documentación.
+.NET 10 Web API (controladores) + EF Core con SQL Server + Identity/JWT. **Multi-tenant**: cada organización
+(`Tenant`) tiene sus datos aislados. Proyectos → Sprints → Historias, más páginas de documentación, comentarios,
+métricas y notificaciones en tiempo real (SignalR).
 
 ## Comandos
 
@@ -26,11 +28,42 @@ Se genera a partir del código: cada acción de los controladores lleva `/// <su
 
 ```
 Controllers/   Capa HTTP: enrutado, autorización ([Authorize(Policies.X)]), DTO de entrada/salida. Sin lógica de negocio ni EF.
-Services/      Lógica de negocio tras interfaces (IProjectService, ISprintService, IStoryService, IPageService…).
-Data/          ScrumDbContext y migraciones.
+Services/      Lógica de negocio tras interfaces (IProjectService, ISprintService, IStoryService, IPageService,
+               ICommentService, INotificationService, IMetricsService…).
+Data/          ScrumDbContext (con el query filter global multi-tenant) y migraciones.
 Models/        Entidades, enums, roles y políticas.
-Auth/          JWT, Identity, políticas de autorización.
+Auth/          JWT, Identity, políticas de autorización, ICurrentTenant y el hub de SignalR.
 ```
+
+## Multi-tenant
+
+Cada fila de las tablas de negocio (`Project`, `Sprint`, `Story`, `AcceptanceCriterion`, `Page`, `TodoItem`,
+`Comment`, `Notification`, `AppUser`) tiene `TenantId`. `ScrumDbContext` aplica un `HasQueryFilter` global por
+cada una (ver `BuildTenantFilter` en `Data/ScrumDbContext.cs`), así que **toda consulta LINQ existente queda
+acotada al tenant automáticamente** — no hace falta (ni conviene) filtrar por `TenantId` a mano en los servicios.
+
+Al **crear** una fila sí hay que setear `TenantId` explícitamente (el filtro no lo hace por vos): tomarlo de
+`User.TenantId()` en el controlador, o heredarlo de la entidad padre ya cargada (ej. un `Comment` toma el de su
+`Story`).
+
+**Regla de oro del filtro:** en `BuildTenantFilter`, el valor del tenant se lee a través de una propiedad del
+propio `ScrumDbContext` (`CurrentTenantId`), nunca capturando `ICurrentTenant` directamente con
+`Expression.Constant`. El modelo (con sus filtros) se cachea una sola vez entre instancias del contexto; capturar
+un objeto ajeno lo deja fijo con el primer valor que vio. Una referencia a un miembro de `this` es el caso que EF
+Core reconoce y revincula con la instancia real de cada consulta — cualquier otra forma rompe el aislamiento entre
+organizaciones de forma sutil (funciona en el primer request, falla o mezcla datos después).
+
+Rutas anónimas que necesitan buscar cruzando tenants (login por email, unicidad de email al registrar) usan
+`.IgnoreQueryFilters()` explícitamente — son las únicas excepciones, y están comentadas en `AuthController.cs`.
+
+## Notificaciones en tiempo real
+
+`Auth/NotificationsHub.cs` expone `/hubs/notifications` (SignalR). Cada conexión se agrega a un grupo por usuario
+(`user:{id}`, vía `IUserIdProvider` sobre el claim `"sub"`). El JWT llega por querystring (`?access_token=`) porque
+el WebSocket no puede mandar el header `Authorization` (ver `OnMessageReceived` en `Auth/Auth.cs`).
+`INotificationService.NotifyAsync` guarda el aviso y lo empuja por el hub en el mismo paso; los servicios que
+disparan notificaciones (`StoryService`, `SprintService`, `CommentService`) la inyectan como cualquier otra
+dependencia.
 
 - **S**: el controlador traduce HTTP; el servicio decide reglas; el `DbContext` persiste.
 - **O**: nueva regla = cambio en el servicio; nuevo recurso = nueva pareja interfaz/servicio + controlador.

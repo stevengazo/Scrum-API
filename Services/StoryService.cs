@@ -5,7 +5,7 @@ using Scrum.Api.Models;
 
 namespace Scrum.Api.Services;
 
-public class StoryService(ScrumDbContext db) : IStoryService
+public class StoryService(ScrumDbContext db, INotificationService notifications) : IStoryService
 {
     /// <summary>Escala de Fibonacci de Planning Poker. Null = sin estimar.</summary>
     private static readonly int[] PointScale = [1, 2, 3, 5, 8, 13, 21];
@@ -29,13 +29,13 @@ public class StoryService(ScrumDbContext db) : IStoryService
         return stories.Select(s => ToDto(s, keys[s.ProjectId])).ToList();
     }
 
-    public async Task<Result<StoryDto>> CreateAsync(int projectId, StoryInput input)
+    public async Task<Result<StoryDto>> CreateAsync(int projectId, StoryInput input, string actorId)
     {
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == projectId);
         if (project is null) return Error.NotFound();
         if (await Validate(projectId, input) is { } error) return error;
 
-        var story = new Story { ProjectId = projectId, Number = project.NextStoryNumber++, Title = input.Title.Trim() };
+        var story = new Story { TenantId = project.TenantId, ProjectId = projectId, Number = project.NextStoryNumber++, Title = input.Title.Trim() };
         Apply(story, input);
         SyncCriteria(story, input.Criteria);
         var max = await db.Stories.Where(s => s.ProjectId == projectId && s.SprintId == story.SprintId && s.Status == story.Status)
@@ -44,19 +44,27 @@ public class StoryService(ScrumDbContext db) : IStoryService
 
         db.Stories.Add(story);
         await db.SaveChangesAsync();
+        if (story.AssigneeId is not null)
+            await notifications.NotifyAsync(story.AssigneeId, NotificationType.Assigned,
+                $"Te asignaron \"{story.Title}\".", $"/p/{projectId}/backlog?story={story.Id}", excludeUserId: actorId);
         return ToDto(story, project.Key);
     }
 
-    public async Task<Result> UpdateAsync(int projectId, int id, StoryInput input)
+    public async Task<Result> UpdateAsync(int projectId, int id, StoryInput input, string actorId)
     {
         var story = await db.Stories.Include(s => s.Criteria).FirstOrDefaultAsync(s => s.Id == id && s.ProjectId == projectId);
         if (story is null) return Error.NotFound();
         if (await Validate(projectId, input) is { } error) return error;
 
+        var previousAssignee = story.AssigneeId;
         story.Title = input.Title.Trim();
         Apply(story, input);
         SyncCriteria(story, input.Criteria);
         await db.SaveChangesAsync();
+
+        if (story.AssigneeId is not null && story.AssigneeId != previousAssignee)
+            await notifications.NotifyAsync(story.AssigneeId, NotificationType.Assigned,
+                $"Te asignaron \"{story.Title}\".", $"/p/{projectId}/backlog?story={story.Id}", excludeUserId: actorId);
         return Result.Success();
     }
 
@@ -107,7 +115,7 @@ public class StoryService(ScrumDbContext db) : IStoryService
             var text = c.Text.Trim();
             if (text.Length == 0) continue;
             var existing = c.Id is null ? null : story.Criteria.FirstOrDefault(x => x.Id == c.Id);
-            if (existing is null) story.Criteria.Add(new AcceptanceCriterion { Text = text, Done = c.Done, Order = i });
+            if (existing is null) story.Criteria.Add(new AcceptanceCriterion { TenantId = story.TenantId, Text = text, Done = c.Done, Order = i });
             else { existing.Text = text; existing.Done = c.Done; existing.Order = i; }
         }
     }

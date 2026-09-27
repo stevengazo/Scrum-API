@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Scrum.Api.Auth;
 using Scrum.Api.Models;
 using Scrum.Api.Services;
 
@@ -54,7 +55,7 @@ public class SprintsController(ISprintService sprints) : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<object>> Complete(int projectId, int id)
     {
-        var result = await sprints.CompleteAsync(projectId, id);
+        var result = await sprints.CompleteAsync(projectId, id, User.UserId());
         return result.Error is { } e ? this.ToFailure(e) : new { returnedToBacklog = result.Value };
     }
 

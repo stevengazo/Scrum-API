@@ -5,18 +5,19 @@ using Scrum.Api.Models;
 
 namespace Scrum.Api.Services;
 
-public class SprintService(ScrumDbContext db) : ISprintService
+public class SprintService(ScrumDbContext db, INotificationService notifications) : ISprintService
 {
     public async Task<IReadOnlyList<Sprint>> ListAsync(int projectId) =>
         await db.Sprints.AsNoTracking().Where(s => s.ProjectId == projectId).OrderBy(s => s.StartDate).ThenBy(s => s.Id).ToListAsync();
 
     public async Task<Result<Sprint>> CreateAsync(int projectId, SprintInput input)
     {
-        if (!await db.Projects.AnyAsync(p => p.Id == projectId)) return Error.NotFound();
+        var tenantId = await db.Projects.Where(p => p.Id == projectId).Select(p => (int?)p.TenantId).FirstOrDefaultAsync();
+        if (tenantId is null) return Error.NotFound();
         if (Validate(input) is { } error) return error;
         var s = new Sprint
         {
-            ProjectId = projectId, Name = input.Name.Trim(), Goal = input.Goal,
+            TenantId = tenantId.Value, ProjectId = projectId, Name = input.Name.Trim(), Goal = input.Goal,
             StartDate = input.StartDate, EndDate = input.EndDate, Capacity = input.Capacity,
         };
         db.Sprints.Add(s);
@@ -48,15 +49,21 @@ public class SprintService(ScrumDbContext db) : ISprintService
     }
 
     /// <summary>Lo no terminado vuelve al backlog y compite de nuevo por prioridad.</summary>
-    public async Task<Result<int>> CompleteAsync(int projectId, int id)
+    public async Task<Result<int>> CompleteAsync(int projectId, int id, string actorId)
     {
         var s = await Find(projectId, id);
         if (s is null) return Error.NotFound();
         if (s.Status != SprintStatus.Active) return Error.Invalid("Solo se puede cerrar un sprint activo.");
 
+        var assignees = await db.Stories.AsNoTracking().Where(x => x.SprintId == id && x.AssigneeId != null)
+            .Select(x => x.AssigneeId!).Distinct().ToListAsync();
         var returned = await ReturnToBacklog(id, notDoneOnly: true);
         s.Status = SprintStatus.Completed;
         await db.SaveChangesAsync();
+
+        foreach (var userId in assignees)
+            await notifications.NotifyAsync(userId, NotificationType.SprintCompleted,
+                $"Se cerró el sprint \"{s.Name}\".", $"/p/{projectId}/sprints", excludeUserId: actorId);
         return returned;
     }
 

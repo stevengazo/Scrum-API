@@ -23,8 +23,10 @@ public class UsersController(UserManager<AppUser> users, ScrumDbContext db) : Co
                                 join r in db.Roles on ur.RoleId equals r.Id
                                 select new { ur.UserId, r.Name }).ToListAsync();
         var list = await users.Users.AsNoTracking().OrderBy(u => u.DisplayName).ToListAsync();
+        // Todos son del mismo tenant (users.Users ya viene acotado por el filtro global): una sola consulta basta.
+        var tenantName = await db.Tenants.Where(t => t.Id == User.TenantId()).Select(t => t.Name).FirstAsync();
         return list.Select(u => new UserDto(u.Id, u.Email!, u.DisplayName, u.Color,
-            [.. roleByUser.Where(x => x.UserId == u.Id).Select(x => x.Name!)]));
+            [.. roleByUser.Where(x => x.UserId == u.Id).Select(x => x.Name!)], tenantName));
     }
 
     [HttpPost]
@@ -33,11 +35,17 @@ public class UsersController(UserManager<AppUser> users, ScrumDbContext db) : Co
     {
         if (!Roles.All.Contains(input.Role)) return BadRequest("Rol inválido.");
         var email = input.Email.Trim();
-        var user = new AppUser { UserName = email, Email = email, DisplayName = input.DisplayName.Trim(), Color = AuthExtensions.ColorFor(email) };
+        // IgnoreQueryFilters: el chequeo de unicidad de Identity solo ve el tenant actual por el filtro global; el
+        // correo es único en toda la instalación.
+        var normalizedEmail = users.NormalizeEmail(email);
+        if (await db.Users.IgnoreQueryFilters().AnyAsync(u => u.NormalizedEmail == normalizedEmail))
+            return BadRequest("Ya existe una cuenta con ese correo.");
+        var user = new AppUser { TenantId = User.TenantId(), UserName = email, Email = email, DisplayName = input.DisplayName.Trim(), Color = AuthExtensions.ColorFor(email) };
         var created = await users.CreateAsync(user, input.Password);
         if (!created.Succeeded) return BadRequest(string.Join(" ", created.Errors.Select(e => e.Description)));
         await users.AddToRoleAsync(user, input.Role);
-        return new UserDto(user.Id, email, user.DisplayName, user.Color, [input.Role]);
+        var tenantName = await db.Tenants.Where(t => t.Id == user.TenantId).Select(t => t.Name).FirstAsync();
+        return new UserDto(user.Id, email, user.DisplayName, user.Color, [input.Role], tenantName);
     }
 
     [HttpPut("{id}")]
@@ -68,6 +76,7 @@ public class UsersController(UserManager<AppUser> users, ScrumDbContext db) : Co
         if (user is null) return NotFound();
         if (await users.IsInRoleAsync(user, Roles.Admin) && await OnlyAdmin(user))
             return BadRequest("Debe existir al menos un Admin.");
+        await db.Stories.Where(s => s.AssigneeId == id).ExecuteUpdateAsync(u => u.SetProperty(s => s.AssigneeId, (string?)null));
         await users.DeleteAsync(user);
         return NoContent();
     }

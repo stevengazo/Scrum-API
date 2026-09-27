@@ -1,11 +1,12 @@
 using Microsoft.EntityFrameworkCore;
+using Scrum.Api.Auth;
 using Scrum.Api.Controllers;
 using Scrum.Api.Data;
 using Scrum.Api.Models;
 
 namespace Scrum.Api.Services;
 
-public class PageService(ScrumDbContext db) : IPageService
+public class PageService(ScrumDbContext db, ICurrentTenant currentTenant) : IPageService
 {
     private const int MaxContentLength = 5_000_000;
     private const double OrderGap = 1024;
@@ -38,6 +39,7 @@ public class PageService(ScrumDbContext db) : IPageService
         var max = await db.Pages.Where(p => p.ParentId == input.ParentId && p.ProjectId == projectId).MaxAsync(p => (double?)p.Order) ?? 0;
         var page = new Page
         {
+            TenantId = currentTenant.TenantId!.Value,
             Title = input.Title?.Trim() ?? "", Icon = input.Icon, ParentId = input.ParentId, ProjectId = projectId,
             Order = max + OrderGap, CreatedById = userId, Kind = kind,
             Content = kind == PageKind.Sheet ? EmptySheet : null,
@@ -86,9 +88,20 @@ public class PageService(ScrumDbContext db) : IPageService
         return Result.Success();
     }
 
-    /// <summary>La cascada de la FK borra todos los descendientes.</summary>
-    public async Task<Result> DeleteAsync(Guid id) =>
-        await db.Pages.Where(p => p.Id == id).ExecuteDeleteAsync() == 0 ? Error.NotFound() : Result.Success();
+    /// <summary>Borra la página y todos sus descendientes (la FK del padre no cascadea en SQL Server).</summary>
+    public async Task<Result> DeleteAsync(Guid id)
+    {
+        var projectId = await db.Pages.Where(p => p.Id == id).Select(p => (int?)p.ProjectId).FirstOrDefaultAsync();
+        if (projectId is null) return Error.NotFound();
+
+        var parents = (await db.Pages.Where(p => p.ProjectId == projectId && p.ParentId != null)
+            .Select(p => new { p.Id, ParentId = p.ParentId!.Value }).ToListAsync()).ToLookup(p => p.ParentId, p => p.Id);
+        var ids = new List<Guid> { id };
+        for (var i = 0; i < ids.Count; i++) ids.AddRange(parents[ids[i]]);
+
+        await db.Pages.Where(p => ids.Contains(p.Id)).ExecuteDeleteAsync();
+        return Result.Success();
+    }
 
     /// <summary>
     /// El contenido de una hoja es un libro { sheets: [{ name, data: { cells } }] } o, en el formato anterior, una sola hoja

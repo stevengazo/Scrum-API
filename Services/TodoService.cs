@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Scrum.Api.Auth;
 using Scrum.Api.Controllers;
 using Scrum.Api.Data;
 using Scrum.Api.Models;
@@ -6,7 +7,7 @@ using Scrum.Api.Models;
 namespace Scrum.Api.Services;
 
 /// <summary>Todas las operaciones se acotan al usuario dueño: nadie ve ni toca los items de otro.</summary>
-public class TodoService(ScrumDbContext db) : ITodoService
+public class TodoService(ScrumDbContext db, ICurrentTenant currentTenant) : ITodoService
 {
     private const double OrderGap = 1024;
     private const int MaxTextLength = 300;
@@ -32,7 +33,7 @@ public class TodoService(ScrumDbContext db) : ITodoService
         if (text.Length > MaxTextLength) return Error.Invalid($"El texto no puede superar {MaxTextLength} caracteres.");
 
         var max = await db.Todos.Where(t => t.UserId == userId && !t.Done).MaxAsync(t => (double?)t.Order) ?? 0;
-        var item = new TodoItem { UserId = userId, Text = text, StoryId = input.StoryId, Order = max + OrderGap };
+        var item = new TodoItem { TenantId = currentTenant.TenantId!.Value, UserId = userId, Text = text, StoryId = input.StoryId, Order = max + OrderGap };
         db.Todos.Add(item);
         await db.SaveChangesAsync();
         return (await ToDtos([item]))[0];

@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
@@ -18,7 +19,7 @@ public class JwtOptions
     public int ExpiresMinutes { get; set; } = 240;
 }
 
-public record UserDto(string Id, string Email, string DisplayName, string Color, string[] Roles);
+public record UserDto(string Id, string Email, string DisplayName, string Color, string[] Roles, string TenantName);
 
 public class TokenService(Microsoft.Extensions.Options.IOptions<JwtOptions> options)
 {
@@ -31,6 +32,7 @@ public class TokenService(Microsoft.Extensions.Options.IOptions<JwtOptions> opti
             new("sub", user.Id),
             new("name", user.DisplayName),
             new("email", user.Email ?? ""),
+            new("tid", user.TenantId.ToString()),
         };
         claims.AddRange(roles.Select(r => new Claim("role", r)));
 
@@ -51,6 +53,9 @@ public static class AuthExtensions
 {
     public static string UserId(this ClaimsPrincipal user) =>
         user.FindFirstValue("sub") ?? throw new InvalidOperationException("Authenticated user has no 'sub' claim.");
+
+    public static int TenantId(this ClaimsPrincipal user) =>
+        int.TryParse(user.FindFirstValue("tid"), out var id) ? id : throw new InvalidOperationException("Authenticated user has no 'tid' claim.");
 
     public static IServiceCollection AddScrumAuth(this IServiceCollection services, IConfiguration config, IHostEnvironment env)
     {
@@ -85,6 +90,17 @@ public static class AuthExtensions
                     RoleClaimType = "role",
                     ClockSkew = TimeSpan.FromMinutes(1),
                 };
+                // El WebSocket del hub de notificaciones no puede mandar el header Authorization.
+                o.Events = new JwtBearerEvents
+                {
+                    OnMessageReceived = ctx =>
+                    {
+                        var token = ctx.Request.Query["access_token"];
+                        if (!string.IsNullOrEmpty(token) && ctx.HttpContext.Request.Path.StartsWithSegments("/hubs"))
+                            ctx.Token = token;
+                        return Task.CompletedTask;
+                    },
+                };
             });
 
         services.AddAuthorizationBuilder()
@@ -93,6 +109,11 @@ public static class AuthExtensions
             .AddPolicy(Policies.ManageSprints, p => p.RequireRole(Roles.Admin, Roles.ScrumMaster))
             .AddPolicy(Policies.Contribute, p => p.RequireRole(Roles.Admin, Roles.ScrumMaster, Roles.ProductOwner, Roles.Developer))
             .AddPolicy(Policies.ManageUsers, p => p.RequireRole(Roles.Admin));
+
+        services.AddSingleton<IUserIdProvider, SubUserIdProvider>();
+        services.AddSignalR();
+        services.AddHttpContextAccessor();
+        services.AddScoped<ICurrentTenant, CurrentTenant>();
         return services;
     }
 
@@ -107,4 +128,14 @@ public static class AuthExtensions
     private static readonly string[] Palette = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6"];
 
     public static string ColorFor(string seed) => Palette[(int)((uint)seed.GetHashCode() % Palette.Length)];
+
+    /// <summary>Slug base para la URL de invitación de un tenant. AuthController le agrega "-2", "-3"… si colisiona.</summary>
+    public static string SlugFor(string name)
+    {
+        var normalized = name.Trim().ToLowerInvariant();
+        normalized = string.Concat(normalized.Normalize(System.Text.NormalizationForm.FormD)
+            .Where(c => System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c) != System.Globalization.UnicodeCategory.NonSpacingMark));
+        var slug = System.Text.RegularExpressions.Regex.Replace(normalized, "[^a-z0-9]+", "-").Trim('-');
+        return slug.Length == 0 ? "org" : slug;
+    }
 }
