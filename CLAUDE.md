@@ -54,7 +54,38 @@ Core reconoce y revincula con la instancia real de cada consulta — cualquier o
 organizaciones de forma sutil (funciona en el primer request, falla o mezcla datos después).
 
 Rutas anónimas que necesitan buscar cruzando tenants (login por email, unicidad de email al registrar) usan
-`.IgnoreQueryFilters()` explícitamente — son las únicas excepciones, y están comentadas en `AuthController.cs`.
+`.IgnoreQueryFilters()` explícitamente — son las únicas excepciones, y están comentadas en `AccountService.cs`
+(compartida entre `AuthController` y `Mcp/Tools/AuthTools.cs`, ver más abajo).
+
+## MCP (`Mcp/`)
+
+El endpoint `/mcp` (SDK oficial `ModelContextProtocol.AspNetCore`) expone casi todo el sistema como tools, en el
+mismo proceso y puerto que la API REST — sin repetir lógica de negocio, las tools llaman a los mismos
+`Services/*`. Alcance: todo el CRUD **excepto los endpoints `DELETE`** (borrar queda afuera a propósito).
+
+- **Auth por sesión, no por cuenta fija**: cada conexión MCP hace `login` (o `register_organization`) con su
+  propio email/contraseña; la identidad queda en `McpSessionStore` (singleton, `ConcurrentDictionary<sessionId,
+  McpSession>`), nunca una cuenta compartida.
+- **`SessionMode = StatefulForInitializeClients`** en `Program.cs` es obligatorio: el default del SDK es sin
+  estado (protocolo 2026-07-28+), lo que rompe el login-por-sesión porque cada tool call llegaría con un
+  `McpServer.SessionId` distinto (o null). Este modo da sesión real (`Mcp-Session-Id`) a cualquier cliente que
+  negocie el handshake `initialize` clásico — Claude Code, Claude Desktop y prácticamente todo cliente MCP actual.
+- **`PrincipalScope.Require`** es la primera línea de casi toda tool: busca la `McpSession` de esa conexión y
+  arma un `ClaimsPrincipal` con los mismos claims que `TokenService.Create` (`sub`, `tid`, `role`×N), asignado al
+  `HttpContext.User` ambiente. A partir de ahí, `User.TenantId()`/`UserId()`, `ICurrentTenant` (y por lo tanto el
+  filtro global de tenant) y las políticas de autorización funcionan exactamente igual que en un request REST —
+  nada de esto se reimplementó para MCP.
+- **`PolicyGuard.RequireAsync`** reemplaza a `[Authorize(Policies.X)]`: como las tools no pasan por el pipeline
+  de MVC, cada tool que escribe llama esto explícitamente con la misma política que usaría su controlador
+  equivalente (`IAuthorizationService.AuthorizeAsync`, no una reimplementación de roles).
+- **Un archivo por recurso** en `Mcp/Tools/` (`[McpServerToolType]`), mismo espíritu que un archivo por recurso
+  en `Controllers/`. Los métodos usan los DTO/record que ya existen en `Controllers/*.cs`.
+- Al agregar un endpoint REST nuevo que no sea `DELETE`, agregar también su tool MCP en el archivo de recurso
+  correspondiente (mismo patrón: `PrincipalScope.Require` → `PolicyGuard` si escribe → llamar al `Service` → tirar
+  `McpException` si `Result.Error`).
+
+Probar el endpoint a mano: `npx @modelcontextprotocol/inspector --cli http://localhost:8080/mcp --method
+tools/list`, o conectarlo de verdad con `claude mcp add --transport http scrum http://<host>:7001/mcp`.
 
 ## Notificaciones en tiempo real
 

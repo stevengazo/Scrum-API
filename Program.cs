@@ -22,6 +22,14 @@ builder.Services.AddScoped<ITodoService, TodoService>();
 builder.Services.AddScoped<ICommentService, CommentService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IMetricsService, MetricsService>();
+builder.Services.AddScoped<IAccountService, AccountService>();
+builder.Services.AddSingleton<Scrum.Api.Mcp.McpSessionStore>();
+// SessionMode: por defecto el SDK sirve todo sin estado (protocolo 2026-07-28+). Las tools de este servidor
+// necesitan recordar el login entre llamadas, así que hace falta sesión real para quien negocia el handshake
+// "initialize" clásico (Claude Code/Desktop, y prácticamente todo cliente MCP de hoy).
+builder.Services.AddMcpServer()
+    .WithHttpTransport(o => o.SessionMode = ModelContextProtocol.AspNetCore.HttpServerSessionMode.StatefulForInitializeClients)
+    .WithToolsFromAssembly(System.Reflection.Assembly.GetExecutingAssembly());
 
 var origins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? ["http://localhost:5173"];
 // AllowCredentials: el hub de notificaciones negocia con cookies/headers de sesión del navegador; es compatible con
@@ -50,6 +58,8 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 app.MapHub<Scrum.Api.Auth.NotificationsHub>("/hubs/notifications");
+// AllowAnonymous: la autenticación de MCP la hace la tool "login" (ver Mcp/), no el esquema JWT de la API REST.
+app.MapMcp("/mcp").AllowAnonymous();
 app.MapHealthChecks("/health").AllowAnonymous();
 
 app.Run();
